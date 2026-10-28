@@ -9,7 +9,7 @@
 <style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
 <title>Carta · Bar Cafetería Papín</title>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <style id="fonts">/* Tipografías del propio dispositivo: la carta no carga recursos de terceros (RGPD). */</style>
 <style id="css">
@@ -380,12 +380,14 @@ function jget(k,d){try{var v=JSON.parse(LS.get(k));return v==null?d:v}catch(e){r
    CONFIGURACIÓN DE FIREBASE
    Pega aquí el objeto firebaseConfig de tu proyecto:
    Firebase › Configuración del proyecto › General › Tus apps › Configuración del SDK
-   (Estos datos son públicos por diseño: la seguridad la ponen las reglas de Firestore).
+   (Estos datos son públicos por diseño: la seguridad la ponen las reglas de Realtime Database).
+   Importante: tiene que incluir la línea databaseURL.
    ===================================================================== */
 var FIREBASE_CONFIG = {
   apiKey: "PEGA_AQUI_TU_API_KEY",
   authDomain: "TU-PROYECTO.firebaseapp.com",
   projectId: "TU-PROYECTO",
+  databaseURL: "https://TU-PROYECTO-default-rtdb.europe-west1.firebasedatabase.app",
   storageBucket: "TU-PROYECTO.appspot.com",
   messagingSenderId: "000000000000",
   appId: "PEGA_AQUI_TU_APP_ID"
@@ -393,25 +395,26 @@ var FIREBASE_CONFIG = {
 /* ===================================================================== */
 var DOC=null,FOTOS=null,AUTH=null,authReady=null;
 function fbOk(){return !!(window.firebase&&FIREBASE_CONFIG.apiKey&&FIREBASE_CONFIG.apiKey.indexOf("PEGA_AQUI")<0)}
-if(fbOk()){try{firebase.initializeApp(FIREBASE_CONFIG);var FS=firebase.firestore();DOC=FS.collection("carta").doc("papin");FOTOS=FS.collection("fotos")}catch(x){console.error(x)}}
+if(fbOk()){try{firebase.initializeApp(FIREBASE_CONFIG);var RT=firebase.database();DOC=RT.ref("papin/carta");FOTOS=RT.ref("papin/fotos")}catch(x){console.error(x)}}
 // La autenticación solo se carga al abrir el panel: así no se guarda nada en los móviles de los clientes.
 function getAuth(){if(!AUTH&&DOC){AUTH=firebase.auth();authReady=new Promise(function(res){var off=AUTH.onAuthStateChanged(function(u){off();res(u)})})}return AUTH}
 function applyRemote(d){if(!d||typeof d.data!=="string")return false;try{var x=JSON.parse(d.data);if(!Array.isArray(x.cats))return false;x._ver=d.ver||0;if(S._ver===x._ver)return false;S=x;return true}catch(e){return false}}
-function refreshMenu(){if(!DOC)return Promise.resolve(false);return DOC.get().then(function(sn){return sn.exists?applyRemote(sn.data()):false}).catch(function(){return false})}
+function refreshMenu(){if(!DOC)return Promise.resolve(false);return DOC.once("value").then(function(sn){return sn.exists()?applyRemote(sn.val()):false}).catch(function(){return false})}
 var pendingRender=false;
 function liveMenu(){if(!DOC){boot();return}
-  DOC.onSnapshot(function(sn){
-    if(!sn.exists){boot();return}
+  DOC.on("value",function(sn){
+    var v=sn.val();
+    if(!v){boot();return}
     var a=$("#admin");
-    if(a&&!a.hidden&&W){if(!dirty&&!saving&&applyRemote(sn.data())){W=JSON.parse(JSON.stringify(S));LAST=JSON.stringify(W);SH=hash(S);renderAdmin()}return}
-    if(applyRemote(sn.data())){if(!booted){boot();return}if($("#layer").innerHTML){pendingRender=true;return}var y=window.scrollY;render();window.scrollTo(0,y)}
+    if(a&&!a.hidden&&W){if(!dirty&&!saving&&applyRemote(v)){W=JSON.parse(JSON.stringify(S));LAST=JSON.stringify(W);SH=hash(S);renderAdmin()}return}
+    if(applyRemote(v)){if(!booted){boot();return}if($("#layer").innerHTML){pendingRender=true;return}var y=window.scrollY;render();window.scrollTo(0,y)}
     else if(!booted)boot();
   },function(e){console.warn(e);boot()});
 }
 // Fotos de platos: guardadas como documentos en la colección "fotos" (item.img = "fs:<id>").
 var BLANK="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==",fotoCache={};
 function imgAttr(u){u=String(u||"");return u.indexOf("fs:")===0?'src="'+BLANK+'" data-fs="'+esc(u.slice(3))+'"':'src="'+esc(u)+'"'}
-function getFoto(id){if(!FOTOS)return Promise.resolve(null);return fotoCache[id]||(fotoCache[id]=FOTOS.doc(id).get().then(function(sn){return sn.exists?sn.data().d:null}).catch(function(){delete fotoCache[id];return null}))}
+function getFoto(id){if(!FOTOS)return Promise.resolve(null);return fotoCache[id]||(fotoCache[id]=FOTOS.child(id).once("value").then(function(sn){return sn.exists()?sn.val().d:null}).catch(function(){delete fotoCache[id];return null}))}
 function hydrateFotos(){document.querySelectorAll("img[data-fs]").forEach(function(im){var id=im.getAttribute("data-fs");im.removeAttribute("data-fs");getFoto(id).then(function(d){if(d)im.src=d})})}
 if("MutationObserver" in window)new MutationObserver(hydrateFotos).observe(document.documentElement,{childList:true,subtree:true});function use(n){try{return window.claude&&window.claude.use?Promise.resolve(window.claude.use(n)).catch(function(){return null}):Promise.resolve(null)}catch(e){return Promise.resolve(null)}}
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
@@ -781,7 +784,7 @@ function guardar(){if(!W||!dirty)return;if(saving){scheduleSave();return}
   var copy=JSON.parse(JSON.stringify(W));delete copy._ver;var body=JSON.stringify(copy);
   if(body.length>950000){setStatus("La carta ocupa demasiado (seguramente por el logo). Prueba con un logo más pequeño.");return}
   saving=true;setStatus("Guardando…");var base=S._ver||0,ver=Date.now();
-  firebase.firestore().runTransaction(function(tx){return tx.get(DOC).then(function(sn){var cur=sn.exists?(sn.data().ver||0):0;if(cur&&cur!==base)throw {code:"conflict"};if(ver<=cur)ver=cur+1;tx.set(DOC,{data:body,ver:ver,updated:firebase.firestore.FieldValue.serverTimestamp()})})}).then(function(){
+  DOC.transaction(function(cur){var cv=cur&&cur.ver||0;if(cv&&cv!==base)return;if(ver<=cv)ver=cv+1;return {data:body,ver:ver,updated:firebase.database.ServerValue.TIMESTAMP}},undefined,false).then(function(r){if(!r.committed)throw {code:"conflict"};
     saving=false;var saved=JSON.parse(body);saved._ver=ver;S=saved;if(W)W._ver=ver;LAST=JSON.stringify(W);SH=hash(S);
     dirty=!!W&&JSON.stringify(W)!==JSON.stringify(S);clearDraft();if(dirty)saveDraft();
     var y=window.scrollY;render();window.scrollTo(0,y);
@@ -790,7 +793,7 @@ function guardar(){if(!W||!dirty)return;if(saving){scheduleSave();return}
     if(pendingCount(W))scheduleTranslate();
   }).catch(function(e){saving=false;saveDraft();var c=e&&e.code||"";
     if(c==="conflict"){setStatus("Alguien ha cambiado la carta desde otro dispositivo a la vez. Cierra el panel y vuelve a abrirlo para ver la versión actual.");return}
-    if(c==="permission-denied"){setStatus("Esta cuenta no tiene permiso para cambiar la carta. Revisa las reglas de Firestore (UID del administrador).");return}
+    if(/permission/i.test(c+" "+(e&&e.message||""))){setStatus("Esta cuenta no tiene permiso para cambiar la carta. Revisa que el correo de las reglas de Realtime Database sea el mismo con el que has entrado.");return}
     if(c==="unauthenticated"){auth=false;status="Tu sesión ha caducado. Entra de nuevo: tus cambios no se han perdido.";renderAdmin();return}
     setStatus("Sin conexión. Tus cambios están guardados en este móvil y se enviarán solos.");clearTimeout(saveT);saveT=setTimeout(guardar,15000)})}window.addEventListener("online",function(){if(W&&dirty)guardar()});
 function scheduleTranslate(){clearTimeout(trT);trT=setTimeout(function(){if(!W||!auth)return;if(dirty||saving){scheduleTranslate();return}var n=pendingCount(W);if(!n)return;
@@ -858,9 +861,9 @@ function leerImg(file,max,type,q){return new Promise(function(res,rej){var fr=ne
 function subirFoto(file,it,done){
   if(!FOTOS){setStatus("Falta configurar Firebase.");return}
   setStatus("Subiendo foto…");
-  leerImg(file,800,"image/jpeg",.72).then(function(r){if(r.uri.length>800000)throw {code:"big"};return FOTOS.add({d:r.uri,t:Date.now()})})
-  .then(function(ref){it.img="fs:"+ref.id;setStatus("Foto subida.");if(done)done();else{mark();renderAdmin()}})
-  .catch(function(e){var c=e&&e.code||"";setStatus(c==="big"?"La foto es demasiado grande. Prueba con otra.":c==="permission-denied"?"Esta cuenta no tiene permiso para subir fotos (revisa las reglas).":"No se pudo subir la foto. Inténtalo otra vez.")});
+  leerImg(file,800,"image/jpeg",.72).then(function(r){if(r.uri.length>800000)throw {code:"big"};var ref=FOTOS.push();return ref.set({d:r.uri,t:Date.now()}).then(function(){return ref})})
+  .then(function(ref){it.img="fs:"+ref.key;setStatus("Foto subida.");if(done)done();else{mark();renderAdmin()}})
+  .catch(function(e){var c=e&&e.code||"";setStatus(c==="big"?"La foto es demasiado grande. Prueba con otra.":/permission/i.test(c+" "+(e&&e.message||""))?"Esta cuenta no tiene permiso para subir fotos (revisa las reglas).":"No se pudo subir la foto. Inténtalo otra vez.")});
 }function paleta(src){
   try{var c=document.createElement("canvas");c.width=c.height=48;var x=c.getContext("2d");x.drawImage(src,0,0,48,48);var d=x.getImageData(0,0,48,48).data,b={};
     for(var i=0;i<d.length;i+=4){if(d[i+3]<128)continue;var r=d[i],g=d[i+1],bl=d[i+2],mx=Math.max(r,g,bl),mn=Math.min(r,g,bl);if(mn>235)continue;var k=(r>>4)+","+(g>>4)+","+(bl>>4),e=b[k]||(b[k]={n:0,r:0,g:0,b:0,s:mx?(mx-mn)/mx:0});e.n++;e.r+=r;e.g+=g;e.b+=bl}
